@@ -112,6 +112,21 @@
       }
     };
 
+    // 将玩家写入房间的 players 子集合
+    window.addPlayerToRoom = async (roomId, playerId, data) => {
+      try {
+        if (!roomId || !playerId) return;
+        const playerRef = doc(db, "rooms", roomId, "players", playerId);
+        await setDoc(
+          playerRef,
+          { ...data, createdAt: serverTimestamp() },
+          { merge: true }
+        );
+      } catch (err) {
+        console.error("添加玩家到房间失败:", err);
+      }
+    };
+
     // 从房间中移除一个玩家；如果房间已空，则删除房间及其子集合
     window.removePlayerFromRoom = async (roomId, playerId) => {
       try {
