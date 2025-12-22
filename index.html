@@ -1332,6 +1332,46 @@
         }
       }, [roomId]);
 
+      // 订阅房间的在线玩家列表（Firestore）
+      useEffect(() => {
+        const db = window.__db;
+        const fs = window.__fs;
+        if (!db || !fs || !roomId) return;
+
+        const { collection, query, orderBy, onSnapshot } = fs;
+        try {
+          const q = query(
+            collection(db, 'rooms', roomId, 'players'),
+            orderBy('createdAt', 'asc')
+          );
+          const unsub = onSnapshot(q, (snap) => {
+            const currentId = window.__currentPlayerId;
+            const remotePlayers = snap.docs.map(d => {
+              const data = d.data() || {};
+              const baseName = data.name || '玩家';
+              let displayName = baseName;
+              const isHostRemote = !!data.isHost;
+              const isMe = d.id === currentId;
+              if (isHostRemote) displayName = `${baseName}（房主）`;
+              if (!isHostRemote && isMe) displayName = `${baseName}（我）`;
+              return {
+                id: d.id,
+                name: displayName,
+                rawName: baseName,
+                avatar: data.avatar || randomEmojiAvatar(),
+                score: data.score || 0,
+                isCurrentUser: isMe,
+                isHost: isHostRemote
+              };
+            });
+            setPlayers(remotePlayers);
+          });
+          return () => unsub();
+        } catch (err) {
+          console.error('订阅房间玩家列表失败:', err);
+        }
+      }, [roomId]);
+
       function publishAnswerAndAdvance() {
         if (advanceRef.current) return;
         advanceRef.current = true;
@@ -1353,7 +1393,7 @@
       }
 
       const maxDuration = settings.isFullSong ? 180 : settings.durationSeconds;
-      const isHost = players.find(p => p.isCurrentUser)?.id === players[0]?.id; 
+      const isHost = players.find(p => p.isCurrentUser)?.isHost; 
 
       useEffect(() => {
         if (songIndex === 0) {
@@ -1778,16 +1818,15 @@
                 type="text"
                 value={inputVal}
                 onChange={(e) => setInputVal(e.target.value)}
-                placeholder={hasGameStarted ? "猜猜是哪首歌..." : "等待中..."}
+                placeholder={hasGameStarted ? "猜猜是哪首歌..." : "聊天 / 等待中..."}
                 className="w-full bg-slate-100 text-slate-800 rounded-full pl-4 pr-9 py-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-green-400 focus:bg-white transition-all placeholder-slate-400 text-sm"
-                disabled={!hasGameStarted}
               />
               <Mic className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
             </div>
             <button 
               type="submit" 
               className="bg-green-500 text-white w-10 h-10 rounded-full shadow-lg shadow-green-200 hover:bg-green-600 disabled:opacity-50 disabled:shadow-none transition-all flex items-center justify-center active:scale-95" 
-              disabled={!inputVal.trim() || !hasGameStarted}
+              disabled={!inputVal.trim()}
             >
               <Send size={18} className="ml-0.5" />
             </button>
@@ -2045,23 +2084,12 @@
           });
 
           // 将房主写入房间的 players 子集合
-          try {
-            const db = window.__db;
-            const fs = window.__fs;
-            if (db && fs) {
-              const { collection, doc, setDoc, serverTimestamp } = {
-                collection: fs.collection,
-                doc: fs.doc,
-                setDoc: window.setDoc || null,
-                serverTimestamp: fs.serverTimestamp
-              };
-              if (collection && fs.doc && fs.serverTimestamp && window.setDoc) {
-                // 如果上面解构失败就不执行，避免出错；实际我们主要依赖上面的 createRoom
-              }
-            }
-          } catch (e) {
-            console.warn('写入房主到 players 子集合时出错（可忽略）:', e);
-          }
+          window.addPlayerToRoom?.(newRoomId, myId, {
+            name: baseName,
+            isHost: true,
+            avatar: myAvatar,
+            score: 0
+          });
         }
 
         setScreen('game');
@@ -2104,10 +2132,30 @@
         setSettings(prev => ({ ...prev, mode: GameMode.ONLINE }));
         setRoomId(inputRoomId);
 
-        setPlayers([
-          { id: 'host', name: '房主', avatar: randomEmojiAvatar(), score: 0, isCurrentUser: false },
-          { id: 'me', name: joinName || '我', avatar: randomEmojiAvatar(), score: 0, isCurrentUser: true }
-        ]);
+        // 生成当前玩家（普通加入者）
+        const baseName = (joinName || '我').trim();
+        const myId = `p_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const myAvatar = randomEmojiAvatar();
+        window.__currentPlayerId = myId;
+
+        const me = {
+          id: myId,
+          name: `${baseName}（我）`,
+          rawName: baseName,
+          avatar: myAvatar,
+          score: 0,
+          isCurrentUser: true,
+          isHost: false
+        };
+        // 初始 players 只放自己，真正的玩家列表通过 Firestore 订阅
+        setPlayers([me]);
+
+        window.addPlayerToRoom?.(inputRoomId, myId, {
+          name: baseName,
+          isHost: false,
+          avatar: myAvatar,
+          score: 0
+        });
 
         setScreen('game');
       };
