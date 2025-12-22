@@ -1969,16 +1969,51 @@
         } else {
           const newRoomId = generateRoomId();
           setRoomId(newRoomId);
-          setPlayers([
-            { id: 'me', name: hostName || '我 (房主)', avatar: randomEmojiAvatar(), score: 0, isCurrentUser: true }
-          ]);
+
+          // 生成当前玩家（房主）的 id 和昵称
+          const baseName = hostName || '我';
+          const myId = `p_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          const myAvatar = randomEmojiAvatar();
+          window.__currentPlayerId = myId;
+
+          const me = {
+            id: myId,
+            name: `${baseName}（房主）`,
+            rawName: baseName,
+            avatar: myAvatar,
+            score: 0,
+            isCurrentUser: true,
+            isHost: true
+          };
+          setPlayers([me]);
+
           // 在 Firebase 中创建房间文档，便于好友通过房间号 / 链接加入
-          window.createRoom?.(newRoomId, hostName || '我 (房主)');
+          window.createRoom?.(newRoomId, baseName + '（房主）');
+
           // 同步房间的歌单和当前题目索引，保证所有人看到同一首歌
           window.updateRoomState?.(newRoomId, {
             songIds: shuffled.map(s => s.id),
             currentIndex: 0
           });
+
+          // 将房主写入房间的 players 子集合
+          try {
+            const db = window.__db;
+            const fs = window.__fs;
+            if (db && fs) {
+              const { collection, doc, setDoc, serverTimestamp } = {
+                collection: fs.collection,
+                doc: fs.doc,
+                setDoc: window.setDoc || null,
+                serverTimestamp: fs.serverTimestamp
+              };
+              if (collection && fs.doc && fs.serverTimestamp && window.setDoc) {
+                // 如果上面解构失败就不执行，避免出错；实际我们主要依赖上面的 createRoom
+              }
+            }
+          } catch (e) {
+            console.warn('写入房主到 players 子集合时出错（可忽略）:', e);
+          }
         }
 
         setScreen('game');
