@@ -1426,6 +1426,47 @@
         }
       }, [songIndex]);
 
+      // 非房主订阅房间的播放状态，自动跟随房主播放/暂停
+      useEffect(() => {
+        if (settings.mode !== GameMode.ONLINE || !roomId) return;
+        const db = window.__db;
+        const fs = window.__fs;
+        if (!db || !fs) return;
+
+        const currentPlayer = players.find(p => p.isCurrentUser);
+        const isLocalHost = currentPlayer?.isHost;
+        if (isLocalHost) return; // 房主自己用本地按钮控制
+
+        const { doc, onSnapshot } = fs;
+        try {
+          const roomRef = doc(db, 'rooms', roomId);
+          const unsub = onSnapshot(roomRef, (snap) => {
+            const data = snap.data();
+            if (!data || typeof data.isPlaying !== 'boolean') return;
+            const audio = audioRef.current;
+            if (!audio) return;
+
+            if (data.isPlaying) {
+              // 房主开始播放：所有非房主自动开始播放
+              audio.currentTime = startOffsetRef.current;
+              audio.play()
+                .then(() => {
+                  setHasGameStarted(true);
+                  setIsPlaying(true);
+                })
+                .catch(() => setIsPlaying(false));
+            } else {
+              // 房主暂停：所有非房主暂停
+              audio.pause();
+              setIsPlaying(false);
+            }
+          });
+          return () => unsub();
+        } catch (err) {
+          console.error('订阅播放状态失败:', err);
+        }
+      }, [settings.mode, roomId, players]);
+
       useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, [messages]);
