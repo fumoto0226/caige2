@@ -12,7 +12,11 @@
   <script type="module">
     // Import the functions you need from the SDKs you need
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
-    import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
+    import { 
+      getFirestore, doc, setDoc, getDoc,
+      collection, addDoc, serverTimestamp,
+      query, orderBy, onSnapshot, limit
+    } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
 
     // Your web app's Firebase configuration（只用 Firestore，不启用 Analytics，减少报错）
     const firebaseConfig = {
@@ -29,6 +33,19 @@
 
     // 初始化 Cloud Firestore
     const db = getFirestore(app);
+
+    // 暴露给 React 代码使用
+    window.__db = db;
+    window.__fs = { 
+      doc,
+      collection, 
+      addDoc, 
+      serverTimestamp, 
+      query, 
+      orderBy, 
+      onSnapshot, 
+      limit 
+    };
 
     // 在全局挂一些给 React 代码用的 helper
     // 房主创建房间时调用
@@ -68,6 +85,30 @@
         await setDoc(roomRef, { active: false }, { merge: true });
       } catch (err) {
         console.error("关闭房间失败:", err);
+      }
+    };
+
+    // 更新房间游戏状态（歌单、当前题目索引等）
+    window.updateRoomState = async (roomId, data) => {
+      try {
+        if (!roomId || !data) return;
+        const roomRef = doc(db, "rooms", roomId);
+        await setDoc(roomRef, data, { merge: true });
+      } catch (err) {
+        console.error("更新房间状态失败:", err);
+      }
+    };
+
+    // 读取房间当前状态
+    window.getRoomState = async (roomId) => {
+      try {
+        if (!roomId) return null;
+        const roomRef = doc(db, "rooms", roomId);
+        const snap = await getDoc(roomRef);
+        return snap.exists() ? snap.data() : null;
+      } catch (err) {
+        console.error("获取房间状态失败:", err);
+        return null;
       }
     };
   </script>
@@ -1207,6 +1248,40 @@
       const countdownRef = useRef(null);
       const advanceRef = useRef(false);
 
+      // 订阅当前房间的聊天消息（Firestore）
+      useEffect(() => {
+        const db = window.__db;
+        const fs = window.__fs;
+        if (!db || !fs || !roomId) return;
+
+        const { collection, query, orderBy, onSnapshot, limit } = fs;
+        try {
+          const q = query(
+            collection(db, 'rooms', roomId, 'messages'),
+            orderBy('createdAt', 'asc'),
+            limit(200)
+          );
+
+          const unsub = onSnapshot(q, (snap) => {
+            const remoteMessages = snap.docs.map(d => ({
+              id: d.id,
+              ...d.data()
+            }));
+            // 把远端的聊天消息（type !== 'system'/'correct' 视为用户消息）和本地系统消息合并
+            setMessages(prev => {
+              const systemMessages = prev.filter(
+                m => m.type === 'system' || m.type === 'correct'
+              );
+              return [...systemMessages, ...remoteMessages];
+            });
+          });
+
+          return () => unsub();
+        } catch (err) {
+          console.error('订阅房间消息失败:', err);
+        }
+      }, [roomId]);
+
       function publishAnswerAndAdvance() {
         if (advanceRef.current) return;
         advanceRef.current = true;
@@ -1395,23 +1470,43 @@
         }
       };
 
-      const handleSendMessage = (e) => {
+      const handleSendMessage = async (e) => {
         e.preventDefault();
         if (!inputVal.trim()) return;
 
         const isCorrect = inputVal.toLowerCase().includes(currentSong.title.toLowerCase());
         const currentUser = players.find(p => p.isCurrentUser);
 
-        const newMessage = {
-          id: Date.now().toString(),
-          playerId: currentUser?.id || 'unknown',
-          playerName: currentUser?.name || '我',
-          text: inputVal,
-          type: 'user'
-        };
+        const db = window.__db;
+        const fs = window.__fs;
 
-        setMessages(prev => [...prev, newMessage]);
-        setInputVal('');
+        try {
+          if (db && fs && roomId) {
+            const { collection, addDoc, serverTimestamp } = fs;
+            await addDoc(collection(db, 'rooms', roomId, 'messages'), {
+              playerId: currentUser?.id || 'unknown',
+              playerName: currentUser?.name || '我',
+              text: inputVal,
+              type: 'user',
+              createdAt: serverTimestamp()
+            });
+            // 列表更新依赖 onSnapshot，不在本地直接 push
+            setInputVal('');
+          } else {
+            // 没有 Firestore 时退回本地逻辑（主要用于本地调试）
+            const newMessage = {
+              id: Date.now().toString(),
+              playerId: currentUser?.id || 'unknown',
+              playerName: currentUser?.name || '我',
+              text: inputVal,
+              type: 'user'
+            };
+            setMessages(prev => [...prev, newMessage]);
+            setInputVal('');
+          }
+        } catch (err) {
+          console.error('发送消息失败:', err);
+        }
 
         if (isCorrect && hasGameStarted) {
           const newGuessed = { ...guessedPlayers, [currentUser?.id || 'unknown']: true };
@@ -1879,24 +1974,50 @@
           ]);
           // 在 Firebase 中创建房间文档，便于好友通过房间号 / 链接加入
           window.createRoom?.(newRoomId, hostName || '我 (房主)');
+          // 同步房间的歌单和当前题目索引，保证所有人看到同一首歌
+          window.updateRoomState?.(newRoomId, {
+            songIds: shuffled.map(s => s.id),
+            currentIndex: 0
+          });
         }
 
         setScreen('game');
       };
 
       const handleJoinGame = async (inputRoomId, joinName) => {
-        // ==== 这里将来接入 Firebase 校验房间是否存在 ====
+        // 先校验房间是否存在
         const exists = await window.checkRoomExists?.(inputRoomId);
         if (exists === false) {
           alert('房间不存在或已关闭');
           return;
         }
 
-        const shuffled = prepareSongs(); 
-        if (!shuffled) return;
+        // 再读取房间状态，优先使用房间里已经记录好的歌单/当前索引
+        const roomState = await window.getRoomState?.(inputRoomId);
 
-        setGameSongs(shuffled);
-        setCurrentSongIndex(0);
+        let songsForGame = null;
+        if (roomState && Array.isArray(roomState.songIds) && roomState.songIds.length > 0) {
+          // 根据房主写入的 songIds 还原相同顺序的歌单
+          const songMap = SONGS.reduce((acc, s) => {
+            acc[s.id] = s;
+            return acc;
+          }, {});
+          songsForGame = roomState.songIds
+            .map(id => songMap[id])
+            .filter(Boolean);
+        }
+
+        // 如果房间里还没有写入歌单（例如老版本创建的房间），退回本地随机
+        if (!songsForGame || songsForGame.length === 0) {
+          const shuffled = prepareSongs();
+          if (!shuffled) return;
+          songsForGame = shuffled;
+        }
+
+        setGameSongs(songsForGame);
+        setCurrentSongIndex(
+          typeof roomState?.currentIndex === 'number' ? roomState.currentIndex : 0
+        );
         setSettings(prev => ({ ...prev, mode: GameMode.ONLINE }));
         setRoomId(inputRoomId);
 
@@ -1910,7 +2031,14 @@
 
       const handleNextSong = () => {
         if (currentSongIndex < gameSongs.length - 1) {
-          setCurrentSongIndex(prev => prev + 1);
+          setCurrentSongIndex(prev => {
+            const next = prev + 1;
+            // 在线房间时，同步当前题目索引到 Firebase
+            if (settings.mode === GameMode.ONLINE && roomId) {
+              window.updateRoomState?.(roomId, { currentIndex: next });
+            }
+            return next;
+          });
         } else {
           setScreen('results');
         }
@@ -1926,6 +2054,12 @@
         if (shuffled) {
           setGameSongs(shuffled);
           setCurrentSongIndex(0);
+          if (settings.mode === GameMode.ONLINE && roomId) {
+            window.updateRoomState?.(roomId, {
+              songIds: shuffled.map(s => s.id),
+              currentIndex: 0
+            });
+          }
           setScreen('game');
         }
       };
@@ -1943,6 +2077,29 @@
           handleJoinGame(roomFromUrl, '我');
         }
       }, []);
+
+      // 在线模式下，订阅房间文档，自动同步当前题目索引（用于统一切歌）
+      useEffect(() => {
+        if (settings.mode !== GameMode.ONLINE || !roomId) return;
+        const db = window.__db;
+        const fs = window.__fs;
+        if (!db || !fs) return;
+
+        const { doc, onSnapshot } = fs;
+        try {
+          const roomRef = doc(db, 'rooms', roomId);
+          const unsub = onSnapshot(roomRef, (snap) => {
+            const data = snap.data();
+            if (!data) return;
+            if (typeof data.currentIndex === 'number' && data.currentIndex !== currentSongIndex) {
+              setCurrentSongIndex(data.currentIndex);
+            }
+          });
+          return () => unsub();
+        } catch (err) {
+          console.error('订阅房间播放状态失败:', err);
+        }
+      }, [settings.mode, roomId, currentSongIndex]);
 
       return (
         <div className="w-full h-screen flex justify-center items-center font-sans">
