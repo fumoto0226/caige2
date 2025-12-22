@@ -1349,11 +1349,10 @@
             const remotePlayers = snap.docs.map(d => {
               const data = d.data() || {};
               const baseName = data.name || '玩家';
-              let displayName = baseName;
               const isHostRemote = !!data.isHost;
               const isMe = d.id === currentId;
-              if (isHostRemote) displayName = `${baseName}（房主）`;
-              if (!isHostRemote && isMe) displayName = `${baseName}（我）`;
+              // 只给房主加后缀，其它人都显示纯昵称
+              const displayName = isHostRemote ? `${baseName}（房主）` : baseName;
               return {
                 id: d.id,
                 name: displayName,
@@ -1372,16 +1371,36 @@
         }
       }, [roomId]);
 
-      function publishAnswerAndAdvance() {
+      async function publishAnswerAndAdvance() {
         if (advanceRef.current) return;
         advanceRef.current = true;
-        setMessages(prev => [...prev, {
-          id: `answer-${Date.now()}`,
-          playerId: 'system',
-          playerName: 'System',
-          text: `✅ 正确答案：${currentSong.title}`,
-          type: 'system'
-        }]);
+        const db = window.__db;
+        const fs = window.__fs;
+
+        // 在线模式下由房主把答案发到 Firestore，所有人通过订阅看到
+        if (settings.mode === GameMode.ONLINE && roomId && db && fs && isHost) {
+          try {
+            const { collection, addDoc, serverTimestamp } = fs;
+            await addDoc(collection(db, 'rooms', roomId, 'messages'), {
+              playerId: 'system',
+              playerName: 'System',
+              text: `✅ 正确答案：${currentSong.title}`,
+              type: 'system',
+              createdAt: serverTimestamp()
+            });
+          } catch (err) {
+            console.error('发布答案消息失败:', err);
+          }
+        } else {
+          // 本地/离线模式仍然直接追加系统消息
+          setMessages(prev => [...prev, {
+            id: `answer-${Date.now()}`,
+            playerId: 'system',
+            playerName: 'System',
+            text: `✅ 正确答案：${currentSong.title}`,
+            type: 'system'
+          }]);
+        }
         setTimeout(() => {
           const isLast = songIndex + 1 >= totalSongs;
           if (isLast) {
