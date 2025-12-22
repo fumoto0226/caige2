@@ -13,8 +13,8 @@
     // Import the functions you need from the SDKs you need
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
     import { 
-      getFirestore, doc, setDoc, getDoc,
-      collection, addDoc, serverTimestamp,
+      getFirestore, doc, setDoc, getDoc, deleteDoc,
+      collection, addDoc, serverTimestamp, getDocs, writeBatch,
       query, orderBy, onSnapshot, limit
     } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
 
@@ -109,6 +109,41 @@
       } catch (err) {
         console.error("获取房间状态失败:", err);
         return null;
+      }
+    };
+
+    // 从房间中移除一个玩家；如果房间已空，则删除房间及其子集合
+    window.removePlayerFromRoom = async (roomId, playerId) => {
+      try {
+        if (!roomId || !playerId) return;
+
+        const playerRef = doc(db, "rooms", roomId, "players", playerId);
+        await deleteDoc(playerRef);
+
+        // 检查是否还有其他玩家
+        const playersSnap = await getDocs(collection(db, "rooms", roomId, "players"));
+        if (!playersSnap.empty) return;
+
+        // 房间已经没人了：删除该房间下的所有子集合文档和房间本身
+        const batch = writeBatch(db);
+
+        const messagesSnap = await getDocs(collection(db, "rooms", roomId, "messages"));
+        messagesSnap.forEach(docSnap => {
+          batch.delete(docSnap.ref);
+        });
+
+        // 再删除 players 子集合里可能残留的文档（保险）
+        playersSnap.forEach(docSnap => {
+          batch.delete(docSnap.ref);
+        });
+
+        // 最后删除房间文档
+        batch.delete(doc(db, "rooms", roomId));
+
+        await batch.commit();
+        console.log(`房间 ${roomId} 已因无人在线被清理`);
+      } catch (err) {
+        console.error("移除玩家或清理房间失败:", err);
       }
     };
   </script>
@@ -1551,13 +1586,11 @@
 
       const handleExitRoom = () => {
         if (window.confirm("确定要退出房间吗？")) {
-            const remainingPlayers = players.filter(p => !p.isCurrentUser);
-            
-            if (remainingPlayers.length === 0) {
-                onEndGame(); 
-            } else {
-                onEndGame();
-            }
+          const currentId = window.__currentPlayerId;
+          if (settings.mode === GameMode.ONLINE && roomId && currentId) {
+            window.removePlayerFromRoom?.(roomId, currentId);
+          }
+          onEndGame();
         }
       };
 
@@ -2135,6 +2168,21 @@
           console.error('订阅房间播放状态失败:', err);
         }
       }, [settings.mode, roomId, currentSongIndex]);
+
+      // 浏览器关闭 / 刷新时，从房间中移除当前玩家
+      useEffect(() => {
+        if (settings.mode !== GameMode.ONLINE || !roomId) return;
+        const handleBeforeUnload = () => {
+          const currentId = window.__currentPlayerId;
+          if (currentId) {
+            window.removePlayerFromRoom?.(roomId, currentId);
+          }
+        };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => {
+          window.removeEventListener('beforeunload', handleBeforeUnload);
+        };
+      }, [settings.mode, roomId]);
 
       return (
         <div className="w-full h-screen flex justify-center items-center font-sans">
