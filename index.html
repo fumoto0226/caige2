@@ -580,8 +580,7 @@
                          <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${settings.includeLive ? 'translate-x-4' : ''}`}></div>
                       </div>
                     </div>
-                    <p className="text-xs text-slate-400 mt-1">关闭后题库仅包含非 Live 版本</p>
-                    </div>
+                  </div>
 
                     <div>
                       <span className="text-sm font-bold text-slate-500 block mb-3">从哪里开始听?</span>
@@ -634,7 +633,7 @@
                   <div>
                     <span className="text-sm font-bold text-slate-500 block mb-3">答题限时</span>
                     <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
-                       {[5, 10, 15, 30, 60, 0].map(sec => (
+                       {[5, 10, 15, 30, 0].map(sec => (
                          <button
                            key={sec}
                            onClick={() => setSettings({...settings, timeLimit: sec})}
@@ -1203,6 +1202,7 @@
       const [isCountingDown, setIsCountingDown] = useState(false);
       const [startOffset, setStartOffset] = useState(0);
       const [guessedPlayers, setGuessedPlayers] = useState({});
+      const [showInviteModal, setShowInviteModal] = useState(false);
 
       const messagesEndRef = useRef(null);
       const audioRef = useRef(null);
@@ -1441,28 +1441,20 @@
       };
 
       const handleInvite = () => {
-        alert("邀请链接已复制到剪贴板！(模拟分享)");
-        setTimeout(() => {
-          const newId = `p${Date.now()}`;
-          setPlayers(prev => {
-            if (prev.length >= 4) return prev;
-            const newPlayer = {
-              id: newId,
-              name: `路人 ${prev.length}`,
-              avatar: randomEmojiAvatar(),
-              score: 0,
-              isCurrentUser: false
-            };
-            setMessages(curr => [...curr, {
-              id: `join-${newId}`,
-              playerId: 'system',
-              playerName: 'System',
-              text: `👋 ${newPlayer.name} 加入了房间`,
-              type: 'system'
-            }]);
-            return [...prev, newPlayer];
-          });
-        }, 2000);
+        setShowInviteModal(true);
+      };
+
+      const copyInviteLink = async () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('room', roomId || '');
+        const link = url.toString();
+        try {
+          await navigator.clipboard.writeText(link);
+          alert('邀请链接已复制到剪贴板，可以发给好友啦！');
+        } catch (err) {
+          console.error('复制失败:', err);
+          window.prompt('复制下面的链接发送给好友：', link);
+        }
       };
 
       const handleExitRoom = () => {
@@ -1660,6 +1652,71 @@
               <Send size={18} className="ml-0.5" />
             </button>
           </form>
+
+          {/* 邀请弹窗 */}
+          {showInviteModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+              <div className="bg-white w-full max-w-sm mx-4 p-6 rounded-3xl shadow-2xl relative">
+                <button
+                  onClick={() => setShowInviteModal(false)}
+                  className="absolute top-4 right-4 p-2 bg-slate-100 rounded-full text-slate-400 hover:bg-slate-200"
+                >
+                  <X size={18} />
+                </button>
+                <div className="mb-4">
+                  <h2 className="text-xl font-black text-slate-800 mb-1">邀请好友加入</h2>
+                  <p className="text-xs text-slate-400">
+                    房间号和邀请链接二选一发给好友，对方打开链接即可自动加入该房间。
+                  </p>
+                </div>
+                <div className="mb-4">
+                  <label className="text-xs font-bold text-slate-500 block mb-1">房间号</label>
+                  <div className="flex items-center justify-between bg-slate-100 rounded-2xl px-4 py-3 gap-2">
+                    <span className="font-black tracking-[0.25em] text-slate-800">{roomId || "----"}</span>
+                    {roomId && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(roomId);
+                            alert('房间号已复制');
+                          } catch (err) {
+                            console.error('复制失败:', err);
+                            window.prompt('复制房间号：', roomId);
+                          }
+                        }}
+                        className="text-[10px] px-2 py-1 rounded-full bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 active:scale-95 whitespace-nowrap"
+                      >
+                        复制
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="mb-4">
+                  <label className="text-xs font-bold text-slate-500 block mb-1">邀请链接</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={`${window.location.origin}${window.location.pathname}?room=${roomId || ""}`}
+                      className="flex-1 bg-slate-100 rounded-2xl px-3 py-2 text-xs text-slate-600 font-mono overflow-hidden text-ellipsis"
+                      onFocus={(e) => e.target.select()}
+                    />
+                    <button
+                      type="button"
+                      onClick={copyInviteLink}
+                      className="flex-shrink-0 px-3 py-2 bg-green-500 text-white rounded-2xl text-xs font-bold hover:bg-green-600 active:scale-95 transition-transform"
+                    >
+                      复制
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  提示：GitHub Pages 首次打开可能稍有延迟，好友看到页面加载完毕后即可开始游戏。
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       );
     };
@@ -1823,6 +1880,8 @@
           setPlayers([
             { id: 'me', name: hostName || '我 (房主)', avatar: randomEmojiAvatar(), score: 0, isCurrentUser: true }
           ]);
+          // 在 Firebase 中创建房间文档，便于好友通过房间号 / 链接加入
+          window.createRoom?.(newRoomId, hostName || '我 (房主)');
         }
 
         setScreen('game');
@@ -1877,6 +1936,16 @@
       const handleHome = () => {
         setScreen('setup');
       };
+
+      // 如果 URL 中带有 ?room=XXXX，则自动尝试以「加入房间」身份进入
+      useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const roomFromUrl = params.get('room');
+        if (roomFromUrl) {
+          // 默认昵称先用「我」，用户进来后可以再改
+          handleJoinGame(roomFromUrl, '我');
+        }
+      }, []);
 
       return (
         <div className="w-full h-screen flex justify-center items-center font-sans">
