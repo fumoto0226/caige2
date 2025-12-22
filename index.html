@@ -44,7 +44,10 @@
       query, 
       orderBy, 
       onSnapshot, 
-      limit 
+      limit,
+      getDocs,
+      writeBatch,
+      deleteDoc
     };
 
     // 在全局挂一些给 React 代码用的 helper
@@ -159,6 +162,38 @@
         console.log(`房间 ${roomId} 已因无人在线被清理`);
       } catch (err) {
         console.error("移除玩家或清理房间失败:", err);
+      }
+    };
+
+    // 清理所有「没有玩家」的房间（在 App 启动时调用一次，用于兜底清理）
+    window.cleanupEmptyRooms = async () => {
+      try {
+        const roomsSnap = await getDocs(collection(db, "rooms"));
+        if (roomsSnap.empty) return;
+
+        for (const roomDoc of roomsSnap.docs) {
+          const roomId = roomDoc.id;
+          const playersSnap = await getDocs(collection(db, "rooms", roomId, "players"));
+          if (!playersSnap.empty) continue; // 还有玩家，不清理
+
+          const batch = writeBatch(db);
+
+          const messagesSnap = await getDocs(collection(db, "rooms", roomId, "messages"));
+          messagesSnap.forEach(docSnap => {
+            batch.delete(docSnap.ref);
+          });
+
+          // 再次保险清理 players 子集合
+          playersSnap.forEach(docSnap => {
+            batch.delete(docSnap.ref);
+          });
+
+          batch.delete(doc(db, "rooms", roomId));
+          await batch.commit();
+          console.log(`Room ${roomId} cleaned up on startup (no players)`);
+        }
+      } catch (err) {
+        console.error("清理空房间失败:", err);
       }
     };
   </script>
@@ -2299,6 +2334,11 @@
       const handleHome = () => {
         setScreen('setup');
       };
+
+      // 应用启动时，尝试清理一下没有玩家的旧房间（兜底）
+      useEffect(() => {
+        window.cleanupEmptyRooms?.();
+      }, []);
 
       // 如果 URL 中带有 ?room=XXXX，则自动尝试以「加入房间」身份进入，并先让用户起昵称
       useEffect(() => {
