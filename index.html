@@ -1317,13 +1317,8 @@
               id: d.id,
               ...d.data()
             }));
-            // 把远端的聊天消息（type !== 'system'/'correct' 视为用户消息）和本地系统消息合并
-            setMessages(prev => {
-              const systemMessages = prev.filter(
-                m => m.type === 'system' || m.type === 'correct'
-              );
-              return [...systemMessages, ...remoteMessages];
-            });
+            // 以远端消息为准，避免系统消息重复
+            setMessages(remoteMessages);
           });
 
           return () => unsub();
@@ -1447,8 +1442,12 @@
             if (!audio) return;
 
             if (data.isPlaying) {
-              // 房主开始播放：所有非房主自动开始播放
-              audio.currentTime = startOffsetRef.current;
+              // 房主开始播放：所有非房主自动以同一随机起点开始播放
+              const offset = typeof data.segmentStart === 'number' ? data.segmentStart : 0;
+              setStartOffset(offset);
+              startOffsetRef.current = offset;
+              setProgress(0);
+              audio.currentTime = offset;
               audio.play()
                 .then(() => {
                   setHasGameStarted(true);
@@ -1502,10 +1501,14 @@
         audio.load();
 
         const handleLoaded = () => {
+          // 本地模式仍然随机起点；线上模式的随机起点由房主在 handleHostStart 中决定并广播
+          let randomOffset = 0;
           const duration = audio.duration || maxDuration;
-          const randomOffset = (settings.playbackPosition === PlaybackPosition.RANDOM && !settings.isFullSong)
-            ? Math.random() * Math.max(0, duration - settings.durationSeconds)
-            : 0;
+          if (settings.mode === GameMode.LOCAL &&
+              settings.playbackPosition === PlaybackPosition.RANDOM &&
+              !settings.isFullSong) {
+            randomOffset = Math.random() * Math.max(0, duration - settings.durationSeconds);
+          }
           setStartOffset(randomOffset);
           startOffsetRef.current = randomOffset;
           setProgress(0);
@@ -1597,11 +1600,24 @@
       };
 
       const handleHostStart = () => {
+        const audio = audioRef.current;
+        let segmentStart = 0;
+        if (audio) {
+          const duration = audio.duration || maxDuration;
+          if (settings.playbackPosition === PlaybackPosition.RANDOM && !settings.isFullSong) {
+            segmentStart = Math.random() * Math.max(0, duration - settings.durationSeconds);
+          }
+          setStartOffset(segmentStart);
+          startOffsetRef.current = segmentStart;
+          setProgress(0);
+          audio.currentTime = segmentStart;
+        }
+
         setHasGameStarted(true);
         startPlayback();
-        // 房主开始播放时，同步播放状态
+        // 房主开始播放时，同步播放状态和起点
         if (settings.mode === GameMode.ONLINE && roomId && isHost) {
-          window.updateRoomState?.(roomId, { isPlaying: true });
+          window.updateRoomState?.(roomId, { isPlaying: true, segmentStart });
         }
         setMessages(prev => [...prev, {
           id: Date.now().toString(),
