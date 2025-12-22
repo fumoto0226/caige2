@@ -64,7 +64,6 @@
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
 </head>
 <body>
   <div id="root"></div>
@@ -92,13 +91,14 @@
     };
 
     const ARTISTS = [
-      { id: '1', name: '周杰伦', avatar: '/img/zjl.png' },
+      { id: '1', name: '周杰伦', avatar: 'img/zjl.png' },
     ];
 
     const EMOJI_AVATARS = ['😃','😊','😎','🤠','🤩','🥳','🧐','🤖','👾','🎧','🎵','🎶','🐱','🐶','🐼','🐯','🦊','🐸','🐧','🦄','🐙','🐳','🐝','🍉','🍓','🍇','🍒','🍔','🍕','🌮','🥐','🍩','🎲','⚽️','🏀','🏆','🚀','✈️','🌈','⭐️','🌟','🔥','💎','🎁','🧸'];
     const randomEmojiAvatar = () => EMOJI_AVATARS[Math.floor(Math.random() * EMOJI_AVATARS.length)];
 
-    const songUrl = (relativePath) => encodeURI(relativePath);
+    // 生成相对路径（兼容 GitHub Pages 项目子路径，避免以 / 开头）
+    const songUrl = (relativePath) => encodeURI(relativePath.startsWith('/') ? relativePath.slice(1) : relativePath);
 
     const ALL_SONG_PATHS = [
       "music/周杰伦/2000.11.07.Jay/周杰伦-伊斯坦堡.mp3",
@@ -315,7 +315,7 @@
         title: extractTitle(p),
         artistId: '1',
         cover: `https://picsum.photos/seed/jay${idx + 1}/200/200`,
-        url: songUrl(`/${p}`),
+        url: songUrl(p),
         isLive,
       };
     });
@@ -1870,6 +1870,5 @@
     const root = createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
-<script type="module" src="/index.tsx"></script>
 </body>
 </html>
