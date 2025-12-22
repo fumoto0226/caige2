@@ -7,6 +7,73 @@
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Firebase (使用 <script> 方式引入 JS SDK，并暴露到 window 上给 React 代码使用) -->
+  <script type="module">
+    // Import the functions you need from the SDKs you need
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-analytics.js";
+    import { getFirestore, doc, setDoc, getDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
+
+    // Your web app's Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyA2-0SV6TbhQJXuMpg73FVRaMJjzA3TGwz0",
+      authDomain: "game-0226.firebaseapp.com",
+      projectId: "game-0226",
+      storageBucket: "game-0226.firebasestorage.app",
+      messagingSenderId: "3161543718",
+      appId: "1:3161543718:web:dd0f6b3d8278ab8d2402e7",
+      measurementId: "G-JHKFDB38BN"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    getAnalytics(app); // 可选：只做初始化，不强依赖返回值
+
+    // 初始化 Cloud Firestore
+    const db = getFirestore(app);
+
+    // 在全局挂一些给 React 代码用的 helper
+    // 房主创建房间时调用
+    window.createRoom = async (roomId, hostName) => {
+      try {
+        const roomRef = doc(db, "rooms", roomId);
+        await setDoc(roomRef, {
+          hostName: hostName || "房主",
+          createdAt: Date.now(),
+          active: true
+        });
+      } catch (err) {
+        console.error("创建房间失败:", err);
+      }
+    };
+
+    // 玩家加入房间前验证房间是否存在
+    window.checkRoomExists = async (roomId) => {
+      try {
+        if (!roomId) return false;
+        const roomRef = doc(db, "rooms", roomId);
+        const snap = await getDoc(roomRef);
+        return snap.exists() && snap.data()?.active !== false;
+      } catch (err) {
+        console.error("检查房间失败:", err);
+        // 出错时返回 true，避免误伤正常用户，只在控制台提示
+        return true;
+      }
+    };
+
+    // 结束游戏 / 房间关闭时可调用（目前只是预留）
+    window.closeRoom = async (roomId) => {
+      try {
+        if (!roomId) return;
+        const roomRef = doc(db, "rooms", roomId);
+        // 这里选择逻辑删除（active=false），你也可以换成 deleteDoc(roomRef)
+        await setDoc(roomRef, { active: false }, { merge: true });
+      } catch (err) {
+        console.error("关闭房间失败:", err);
+      }
+    };
+  </script>
   
   <!-- Tailwind Config -->
   <script>
