@@ -1863,11 +1863,11 @@
               if (msg.type === 'system') {
                 const isAnswerMsg = msg.text && msg.text.includes('正确答案');
                 return (
-                  <div key={msg.id} className="flex justify-center my-3">
+                  <div key={msg.id} className="flex justify-center my-2">
                     <span
-                      className={`text-xs sm:text-sm font-black px-5 py-2 rounded-full tracking-wide ${
+                      className={`text-[11px] font-bold px-4 py-1.5 rounded-full tracking-wide ${
                         isAnswerMsg
-                          ? 'bg-green-100 text-green-700 border-2 border-green-400 shadow-md'
+                          ? 'bg-green-100 text-green-700 border border-green-400 shadow-sm'
                           : 'bg-slate-200 text-slate-500'
                       }`}
                     >
