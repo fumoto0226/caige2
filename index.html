@@ -2234,7 +2234,7 @@
         }
       }, []);
 
-      // 在线模式下，订阅房间文档，自动同步当前题目索引和播放状态（用于统一切歌与播放）
+      // 在线模式下，订阅房间文档，自动同步当前题目索引（用于统一切歌）
       useEffect(() => {
         if (settings.mode !== GameMode.ONLINE || !roomId) return;
         const db = window.__db;
@@ -2250,33 +2250,12 @@
             if (typeof data.currentIndex === 'number' && data.currentIndex !== currentSongIndex) {
               setCurrentSongIndex(data.currentIndex);
             }
-            // 非房主根据 isPlaying 字段控制本地音频播放/暂停
-            if (typeof data.isPlaying === 'boolean') {
-              const currentPlayer = players.find(p => p.isCurrentUser);
-              const isHostLocal = currentPlayer?.isHost;
-              if (!isHostLocal) {
-                const audio = audioRef.current;
-                if (!audio) return;
-                if (data.isPlaying && !isPlaying) {
-                  // 开始播放
-                  audio.currentTime = startOffsetRef.current;
-                  audio.play().then(() => {
-                    setHasGameStarted(true);
-                    setIsPlaying(true);
-                  }).catch(() => setIsPlaying(false));
-                } else if (!data.isPlaying && isPlaying) {
-                  // 暂停播放
-                  audio.pause();
-                  setIsPlaying(false);
-                }
-              }
-            }
           });
           return () => unsub();
         } catch (err) {
           console.error('订阅房间播放状态失败:', err);
         }
-      }, [settings.mode, roomId, currentSongIndex, isPlaying, players]);
+      }, [settings.mode, roomId, currentSongIndex]);
 
       // 浏览器关闭 / 刷新时，从房间中移除当前玩家
       useEffect(() => {
