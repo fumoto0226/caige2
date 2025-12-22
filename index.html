@@ -1539,6 +1539,10 @@
       const handleHostStart = () => {
         setHasGameStarted(true);
         startPlayback();
+        // 房主开始播放时，同步播放状态
+        if (settings.mode === GameMode.ONLINE && roomId && isHost) {
+          window.updateRoomState?.(roomId, { isPlaying: true });
+        }
         setMessages(prev => [...prev, {
           id: Date.now().toString(),
           playerId: 'system',
@@ -1555,8 +1559,16 @@
         if (isPlaying) {
           audio.pause();
           setIsPlaying(false);
+          if (settings.mode === GameMode.ONLINE && roomId && isHost) {
+            window.updateRoomState?.(roomId, { isPlaying: false });
+          }
         } else {
-          audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+          audio.play().then(() => {
+            setIsPlaying(true);
+            if (settings.mode === GameMode.ONLINE && roomId && isHost) {
+              window.updateRoomState?.(roomId, { isPlaying: true });
+            }
+          }).catch(() => setIsPlaying(false));
         }
       };
 
@@ -1626,13 +1638,15 @@
         setShowInviteModal(true);
       };
 
+      const [copyHint, setCopyHint] = useState('');
+
       const copyInviteLink = async () => {
         const url = new URL(window.location.href);
         url.searchParams.set('room', roomId || '');
         const link = url.toString();
         try {
           await navigator.clipboard.writeText(link);
-          alert('邀请链接已复制到剪贴板，可以发给好友啦！');
+          setCopyHint('链接已复制');
         } catch (err) {
           console.error('复制失败:', err);
           window.prompt('复制下面的链接发送给好友：', link);
@@ -1858,7 +1872,7 @@
                         onClick={async () => {
                           try {
                             await navigator.clipboard.writeText(roomId);
-                            alert('房间号已复制');
+                            setCopyHint('房间号已复制');
                           } catch (err) {
                             console.error('复制失败:', err);
                             window.prompt('复制房间号：', roomId);
@@ -1890,9 +1904,16 @@
                     </button>
                   </div>
                 </div>
-                <p className="text-[10px] text-slate-400">
-                  提示：GitHub Pages 首次打开可能稍有延迟，好友看到页面加载完毕后即可开始游戏。
-                </p>
+                <div className="flex justify-between items-center mt-1">
+                  <p className="text-[10px] text-slate-400">
+                    提示：GitHub Pages 首次打开可能稍有延迟，好友看到页面加载完毕后即可开始游戏。
+                  </p>
+                  {copyHint && (
+                    <span className="text-[10px] text-green-500 font-bold">
+                      {copyHint}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -2133,7 +2154,11 @@
         setRoomId(inputRoomId);
 
         // 生成当前玩家（普通加入者）
-        const baseName = (joinName || '我').trim();
+        let baseName = (joinName || '').trim();
+        if (!baseName) {
+          // 未填写昵称时，使用“用户+随机编号”
+          baseName = `用户${Math.floor(1000 + Math.random() * 9000)}`;
+        }
         const myId = `p_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
         const myAvatar = randomEmojiAvatar();
         window.__currentPlayerId = myId;
@@ -2164,9 +2189,9 @@
         if (currentSongIndex < gameSongs.length - 1) {
           setCurrentSongIndex(prev => {
             const next = prev + 1;
-            // 在线房间时，同步当前题目索引到 Firebase
+            // 在线房间时，同步当前题目索引和播放状态到 Firebase
             if (settings.mode === GameMode.ONLINE && roomId) {
-              window.updateRoomState?.(roomId, { currentIndex: next });
+              window.updateRoomState?.(roomId, { currentIndex: next, isPlaying: false });
             }
             return next;
           });
@@ -2199,17 +2224,17 @@
         setScreen('setup');
       };
 
-      // 如果 URL 中带有 ?room=XXXX，则自动尝试以「加入房间」身份进入
+      // 如果 URL 中带有 ?room=XXXX，则自动尝试以「加入房间」身份进入，并先让用户起昵称
       useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         const roomFromUrl = params.get('room');
         if (roomFromUrl) {
-          // 默认昵称先用「我」，用户进来后可以再改
-          handleJoinGame(roomFromUrl, '我');
+          const inputName = window.prompt('请输入你的昵称', '');
+          handleJoinGame(roomFromUrl, inputName || '');
         }
       }, []);
 
-      // 在线模式下，订阅房间文档，自动同步当前题目索引（用于统一切歌）
+      // 在线模式下，订阅房间文档，自动同步当前题目索引和播放状态（用于统一切歌与播放）
       useEffect(() => {
         if (settings.mode !== GameMode.ONLINE || !roomId) return;
         const db = window.__db;
@@ -2225,12 +2250,33 @@
             if (typeof data.currentIndex === 'number' && data.currentIndex !== currentSongIndex) {
               setCurrentSongIndex(data.currentIndex);
             }
+            // 非房主根据 isPlaying 字段控制本地音频播放/暂停
+            if (typeof data.isPlaying === 'boolean') {
+              const currentPlayer = players.find(p => p.isCurrentUser);
+              const isHostLocal = currentPlayer?.isHost;
+              if (!isHostLocal) {
+                const audio = audioRef.current;
+                if (!audio) return;
+                if (data.isPlaying && !isPlaying) {
+                  // 开始播放
+                  audio.currentTime = startOffsetRef.current;
+                  audio.play().then(() => {
+                    setHasGameStarted(true);
+                    setIsPlaying(true);
+                  }).catch(() => setIsPlaying(false));
+                } else if (!data.isPlaying && isPlaying) {
+                  // 暂停播放
+                  audio.pause();
+                  setIsPlaying(false);
+                }
+              }
+            }
           });
           return () => unsub();
         } catch (err) {
           console.error('订阅房间播放状态失败:', err);
         }
-      }, [settings.mode, roomId, currentSongIndex]);
+      }, [settings.mode, roomId, currentSongIndex, isPlaying, players]);
 
       // 浏览器关闭 / 刷新时，从房间中移除当前玩家
       useEffect(() => {
